@@ -10,7 +10,7 @@ This document explains how the system is built and deployed: Terraform (AWS), La
 graph TD
   TG[Telegram User] -->|Webhook updates| APIGW(API Gateway v2 - HTTP API)
   APIGW --> LBD[AWS Lambda (app.py)]
-  LBD --> GEO[Amazon Location Service<br/>• PlaceIndex<br/>• RouteCalculator]
+  LBD --> GEO[Amazon Location Service<br/>PlaceIndex &amp; RouteCalculator]
   LBD --> DDB[(DynamoDB<br/>ridebot-trips)]
   LBD --> SSM[SSM Parameter Store<br/>/ridebot/*]
   LBD --> TGAPI[Telegram Bot API]
