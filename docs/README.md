@@ -119,7 +119,7 @@ ridebot-infra/
 | `schedule_iso`     | String | `2025-09-20T23:30:00-05:00`                           |
 | `passenger_phone`  | String | `+1 850 555 0100`                                     |
 | `driver_chat_id`   | String | `"123456789"`                                         |
-| `driver_name`      | String | `"Ruslan"`                                            |
+| `driver_name`      | String | `"Name"`                                            |
 | `driver_car`       | String | `"Toyota Sienna"`                                     |
 | `created_at_iso`   | String | ISO timestamp                                         |
 | `updated_at_iso`   | String | ISO timestamp                                         |
@@ -140,7 +140,7 @@ ridebot-infra/
   "schedule_iso": "2025-09-20T23:30:00-05:00",
   "passenger_phone": "+1 850 555 0100",
   "driver_chat_id": "123456789",
-  "driver_name": "Ruslan",
+  "driver_name": "Name",
   "driver_car": "Toyota Sienna",
   "created_at_iso": "2025-09-19T21:30:04Z",
   "updated_at_iso": "2025-09-19T21:32:10Z"
@@ -156,7 +156,7 @@ Create SSM parameters:
 ```bash
 aws ssm put-parameter --name /ridebot/telegram_bot_token --type SecureString --value "<BOT_TOKEN>"
 aws ssm put-parameter --name /ridebot/driver_chat_ids --type String --value '["<CHAT_ID_1>","<CHAT_ID_2>"]'
-aws ssm put-parameter --name /ridebot/driver_profiles --type String --value '[{"chat_id":"<CHAT_ID_1>","name":"Ruslan","car":"Toyota Sienna"},{"chat_id":"<CHAT_ID_2>","name":"Lenora","car":"Toyota Sienna"}]'
+aws ssm put-parameter --name /ridebot/driver_profiles --type String --value '[{"chat_id":"<CHAT_ID_1>","name":"Name","car":"Toyota Sienna"},{"chat_id":"<CHAT_ID_2>","name":"Lenora","car":"Toyota Sienna"}]'
 ```
 
 ### 2) Local Terraform
