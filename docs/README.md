@@ -130,8 +130,8 @@ ridebot-infra/
   "pk": "TRIP#7toaax",
   "sk": "META",
   "status": "DriverPending",
-  "pickup_address": "2055 Alfred Blvd, Navarre, FL",
-  "dropoff_address": "7458 Treasure St, Navarre, FL",
+  "pickup_address": "123 Main St, Example City, FL",
+  "dropoff_address": "456 Oak Ave, Sample Town, FL"
   "distance_miles": 1.6,
   "eta_min": 6,
   "price_usd": 10.0,
