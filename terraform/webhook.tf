@@ -1,48 +1,67 @@
-# Build webhook URL from your HTTP API (v2) stage.
-# If your stage resource is not "aws_apigatewayv2_stage.prod", replace it below.
+# ------------------------------------------------------
+# Local values: build API base URL and final webhook URL
+# ------------------------------------------------------
 locals {
-  api_base    = trimsuffix(aws_apigatewayv2_stage.prod.invoke_url, "/")
+  # Base URL of the API Gateway stage (strip trailing "/")
+  api_base = trimsuffix(aws_apigatewayv2_stage.prod.invoke_url, "/")
+
+  # Full Telegram webhook endpoint (POST /telegram/webhook)
   webhook_url = "${local.api_base}/telegram/webhook"
 }
 
-# 1) Set Telegram webhook on EVERY apply (force run).
-# We do NOT reference other null_resources here to avoid undeclared-name errors.
+# ------------------------------------------------------
+# Resource 1: Set Telegram webhook
+# ------------------------------------------------------
+# Runs a local script during `terraform apply` to register the
+# correct webhook URL in Telegram.
+# - Uses null_resource + local-exec so it is executed each time.
+# - Deletes old webhook (if any), then sets new one.
+# - Prints current webhook info to Terraform logs.
 resource "null_resource" "telegram_webhook" {
+  # Triggers:
+  # - always_run ensures it executes on every `apply`
+  # - webhook_url ensures re-run when URL changes
   triggers = {
-    always_run  = timestamp()       # force on each apply
-    webhook_url = local.webhook_url # also re-run when URL changes
+    always_run  = timestamp()
+    webhook_url = local.webhook_url
   }
 
   provisioner "local-exec" {
     command = <<-EOT
       set -euo pipefail
 
-      # Read bot token from SSM with decryption at runtime (robust & local)
+      # Fetch bot token from SSM Parameter Store (decrypted at runtime)
       TOKEN="$(aws ssm get-parameter --name /ridebot/telegram_bot_token --with-decryption --query 'Parameter.Value' --output text)"
 
-      # Delete old webhook (ignore errors)
+      # Remove old webhook to avoid mismatches (ignore errors if none exists)
       curl -s -X POST "https://api.telegram.org/bot$${TOKEN}/deleteWebhook" \
         -d "drop_pending_updates=true" >/dev/null || true
 
-      # Set new webhook to the CURRENT API URL
+      # Register the new webhook pointing to the CURRENT API URL
       curl -s -X POST "https://api.telegram.org/bot$${TOKEN}/setWebhook" \
         -d "url=${local.webhook_url}" >/dev/null
 
-      # Print current info (visible in terraform apply output)
+      # Print current webhook info for visibility in terraform output
       curl -s "https://api.telegram.org/bot$${TOKEN}/getWebhookInfo"
     EOT
     interpreter = ["/bin/bash", "-c"]
   }
 
-  # Wait until the HTTP API stage exists (rename if your stage has a different name)
+  # Ensure API Gateway stage exists before setting webhook
   depends_on = [aws_apigatewayv2_stage.prod]
 }
 
-# 2) Verify with retries. If Telegram still shows old/empty URL, re-set and retry.
+# ------------------------------------------------------
+# Resource 2: Verify Telegram webhook
+# ------------------------------------------------------
+# Adds an extra verification step after setting webhook.
+# - Repeatedly queries getWebhookInfo
+# - If Telegram does not report the expected URL, retries setWebhook.
+# - Fails after max retries if still not correct.
 resource "null_resource" "telegram_webhook_verify" {
   triggers = {
-    always_run = timestamp()        # run every apply
-    expected   = local.webhook_url  # track expected URL
+    always_run = timestamp()
+    expected   = local.webhook_url
   }
 
   provisioner "local-exec" {
@@ -52,31 +71,33 @@ resource "null_resource" "telegram_webhook_verify" {
       TOKEN="$(aws ssm get-parameter --name /ridebot/telegram_bot_token --with-decryption --query 'Parameter.Value' --output text)"
       EXPECTED="${local.webhook_url}"
 
-      # small grace period after setWebhook
+      # Give Telegram API a small grace period before checks
       sleep 2
 
       for i in $(seq 1 12); do
         INFO="$(curl -s "https://api.telegram.org/bot$${TOKEN}/getWebhookInfo" || true)"
         echo "getWebhookInfo attempt $i: $INFO" 1>&2
 
-        # success if EXPECTED substring is present
+        # Success: webhook URL matches what we expect
         if printf "%s" "$INFO" | grep -q "$EXPECTED"; then
           echo "Webhook OK: $EXPECTED"
           exit 0
         fi
 
+        # Otherwise, retry by re-sending setWebhook
         echo "Webhook mismatch (want=$EXPECTED). Re-setting and retry $i..." 1>&2
         curl -s -X POST "https://api.telegram.org/bot$${TOKEN}/setWebhook" \
           -d "url=$${EXPECTED}" >/dev/null || true
         sleep 3
       done
 
+      # Fail if still wrong after all retries
       echo "Failed to verify Telegram webhook after retries." >&2
       exit 1
     EOT
     interpreter = ["/bin/bash", "-c"]
   }
 
-  # Ensure API stage exists before verification (no dependency on other null_resources)
+  # Ensure API stage exists before verification
   depends_on = [aws_apigatewayv2_stage.prod]
 }
