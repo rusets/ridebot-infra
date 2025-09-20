@@ -8,13 +8,14 @@ This document explains how the system is built and deployed: **Terraform (AWS)**
 
 ```mermaid
 flowchart TD
-  TG[Telegram User] --> APIGW[API Gateway v2 (HTTP API)]
-  APIGW --> LBD[AWS Lambda\n(app.py)]
-  LBD --> GEO[Amazon Location Service\nPlaceIndex & RouteCalculator]
-  LBD --> DDB[DynamoDB\nridebot-trips]
-  LBD --> SSM[SSM Parameter Store\n/ridebot/*]
-  LBD --> LOGS[CloudWatch Logs]
+  TG["Telegram User"] --> APIGW["API Gateway v2<br/>(HTTP API)"]
+  APIGW --> LBD["AWS Lambda<br/>(app.py)"]
+  LBD --> GEO["Amazon Location Service<br/>PlaceIndex & RouteCalculator"]
+  LBD --> DDB["DynamoDB<br/>ridebot-trips"]
+  LBD --> SSM["SSM Parameter Store<br/>/ridebot/*"]
+  LBD --> LOGS["CloudWatch Logs"]
 ```
+*If GitHub still fails to render, ensure the fenced block starts with exactly <code>```mermaid</code> and you are viewing it on github.com (Mermaid is not rendered in some IDE previews).*
 
 ---
 
@@ -186,8 +187,8 @@ You should see your current API Gateway URL in `url`.
 
 - **Mermaid “Unable to render”**  
   - Blocks must start with ```mermaid and end with three backticks.  
-  - Use `flowchart TD`, `sequenceDiagram`, or `stateDiagram-v2`.  
-  - Use `\n` inside labels for line breaks.
+  - Use `<br/>` inside labels for line breaks (not `\n`).  
+  - View on github.com (some IDE previews don't render Mermaid).
 
 - **Bot silent after re-deploy**  
   - Check `terraform output webhook_url` and `getWebhookInfo`.  
