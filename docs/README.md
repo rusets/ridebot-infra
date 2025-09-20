@@ -1,186 +1,165 @@
-# 📘 RideBot — Technical Documentation
+# 🚖 RideBot — Technical Documentation
 
 This document explains how the system is built and deployed: Terraform (AWS), Lambda (Python), API Gateway, DynamoDB, Amazon Location, SSM parameters, and CI/CD via GitHub Actions with OIDC.
 
 ---
 
-## 🏗️ High-level architecture
+## 📐 High-level architecture
 
 ```mermaid
 graph TD
-  TG[Telegram User] -->|Webhook updates| APIGW(API Gateway v2 - HTTP API)
+  TG[Telegram User] -->|Webhook updates| APIGW(API Gateway v2 – HTTP API)
   APIGW --> LBD[AWS Lambda (app.py)]
-  LBD --> GEO[Amazon Location Service<br/>PlaceIndex &amp; RouteCalculator]
+  LBD --> GEO[Amazon Location Service<br/>PlaceIndex & RouteCalculator]
   LBD --> DDB[(DynamoDB<br/>ridebot-trips)]
   LBD --> SSM[SSM Parameter Store<br/>/ridebot/*]
   LBD --> TGAPI[Telegram Bot API]
-  subgraph IaC
+
+  subgraph IaC [Terraform]
     TF[Terraform] --> APIGW
     TF --> LBD
     TF --> DDB
     TF --> GEO
     TF --> SSM
-    TF -->|IAM| IAM[(IAM Roles/Policies)]
+    TF --> IAM[IAM Roles & Policies]
   end
 ```
 
 ---
 
-## 🔁 Message flow (sequence)
+## 📂 Repository structure
 
-```mermaid
-sequenceDiagram
-  participant P as Passenger (Telegram)
-  participant TG as Telegram API
-  participant G as API Gateway
-  participant L as Lambda (app.py)
-  participant GEO as Amazon Location
-  participant DB as DynamoDB
-  participant D as Driver (Telegram)
-
-  P->>TG: sends message (/newride, addresses, date/time, phone)
-  TG->>G: webhook POST /telegram/webhook
-  G->>L: forwards JSON update
-  L->>GEO: geocode + calculate route
-  GEO-->>L: distance, ETA
-  L->>DB: put TRIP#id (status=pending)
-  L->>TG: reply to passenger (summary + confirm)
-  L->>D: notify driver(s) with Accept button
-  D->>TG: taps Accept / status buttons
-  TG->>G: callback update
-  G->>L: forwards callback
-  L->>DB: update status (accepted / on_the_way / started / finished)
-  L->>TG: notify passenger with status updates
+```
+ridebot-infra/
+├── docs/                # Documentation (this file, diagrams)
+├── lambda_src/          # Python source code for Lambda (app.py, requirements.txt)
+├── lambda_src.zip       # Packaged Lambda deployment artifact
+├── terraform/           # IaC definitions
+│   ├── apigw.tf         # API Gateway (HTTP API)
+│   ├── backend.tf       # Remote backend (S3 + DynamoDB state/lock)
+│   ├── dynamodb.tf      # DynamoDB table for trips
+│   ├── iam.tf           # IAM roles & policies for Lambda
+│   ├── identity.tf      # Caller identity & AWS partition data sources
+│   ├── lambda.tf        # Lambda function definition & packaging
+│   └── variables.tf     # Input variables (region, project name, etc.)
 ```
 
 ---
 
-## 📦 Terraform modules (folder: `terraform/`)
+## ⚙️ Components
 
-- **`backend.tf`** – remote state in S3 (`ridebot-terraform-state`), lock table `ridebot-tf-locks`.
-- **`identity.tf`** – `data.aws_caller_identity` and `data.aws_partition` used in ARNs.
-- **`iam.tf`** – Lambda execution role + policy granting:
-  - CloudWatch Logs (create streams, put events)
-  - DynamoDB CRUD for table `ridebot-trips`
-  - SSM read `/ridebot/*` (+ KMS decrypt for `alias/aws/ssm`)
-  - Amazon Location (`SearchPlaceIndexForText`, `CalculateRoute`)
-- **`dynamodb.tf`** – table `ridebot-trips` with `PK`/`SK`, (plus optional GSIs if needed).
-- **`lambda.tf`** – Lambda function `ridebot-handler` packaged from `lambda_src` (or `lambda_src.zip`).
-- **`apigw.tf`** – HTTP API + route `POST /telegram/webhook`, integration with Lambda.
-- **`outputs.tf`** – `webhook_url`, API base URL, resource names.
-- **`webhook.tf` (optional)** – local-exec that resets Telegram webhook after apply.
+### **Lambda (Python)**
+- Source: `lambda_src/app.py`
+- Handles Telegram webhook events
+- Calls:
+  - DynamoDB (`ridebot-trips`) for storing trip requests
+  - Amazon Location Service (search places, calculate routes)
+  - SSM Parameter Store (`/ridebot/telegram_bot_token`) for secrets
 
-> After `apply`, the CI also resets the webhook to the fresh API URL (see CI below).
+### **API Gateway v2**
+- Exposes a **public webhook URL** for Telegram to deliver updates.
+- Integrates directly with the Lambda.
 
-### Init & deploy
+### **DynamoDB**
+- Table: `ridebot-trips`
+- Stores ride requests with partition key `ride_id` (string, UUID).
 
+### **Amazon Location Service**
+- `PlaceIndex` for address search.
+- `RouteCalculator` for distance/ETA calculation.
+
+### **SSM Parameter Store**
+- Secrets stored securely:
+  - `/ridebot/telegram_bot_token`
+  - Any future configuration values.
+
+### **IAM Roles & Policies**
+- Least-privilege execution role for Lambda.
+- GitHub Actions role with OIDC trust to deploy infra.
+
+---
+
+## 🚀 Deployment
+
+### Local (manual)
 ```bash
 cd terraform
-terraform init -reconfigure      # picks S3 backend
-terraform plan -out=tfplan
-terraform apply -auto-approve tfplan
+terraform init
+terraform apply -auto-approve
 ```
 
-### Useful outputs
+### GitHub Actions (CI/CD)
+- Workflow: `.github/workflows/deploy.yml`
+- Steps:
+  1. Checkout repo
+  2. Configure AWS creds via OIDC
+  3. Terraform init/plan/apply
+
+---
+
+## ✅ Verifying webhook
+
+After deploy, verify with:
 
 ```bash
-terraform output -json | jq
-# webhook_url, api_base_url, dynamodb_table, place_index_name, route_calculator_name
+TOKEN=$(aws ssm get-parameter --name /ridebot/telegram_bot_token --with-decryption --query 'Parameter.Value' --output text)
+curl -s "https://api.telegram.org/bot${TOKEN}/getWebhookInfo"
+```
+
+Expected:
+```json
+{
+  "ok": true,
+  "result": {
+    "url": "https://<api-id>.execute-api.us-east-1.amazonaws.com/prod/telegram/webhook",
+    "pending_update_count": 0
+  }
+}
 ```
 
 ---
 
-## 🔐 SSM Parameters (Parameter Store)
+## 🗂 DynamoDB Schema
 
-Create once:
+| Attribute   | Type    | Notes                          |
+|-------------|---------|--------------------------------|
+| ride_id     | String  | Primary key (UUID)             |
+| user_id     | String  | Telegram user ID               |
+| pickup      | String  | Pickup address                 |
+| dropoff     | String  | Dropoff address                |
+| status      | String  | [requested, assigned, done]    |
+| created_at  | String  | ISO timestamp                  |
 
-- `/ridebot/telegram_bot_token` – **SecureString**, your BotFather token.
-- `/ridebot/driver_profiles` – **String** or **SecureString**. Example:
-  ```json
-  [
-    {"chat_id":"123456", "name":"Ruslan", "car":"Toyota Sienna"},
-    {"chat_id":"987654", "name":"Lenora", "car":"Toyota Sienna"}
-  ]
-  ```
-
-*(Legacy)* `/ridebot/driver_chat_id` may exist but is ignored.
-
----
-
-## 🐍 Lambda app (`lambda_src/app.py`)
-
-Main responsibilities:
-
-- Parse Telegram updates (messages + callbacks).
-- States: address collection → price summary → date/time pickers → phone capture → confirm.
-- Price rule: **min $10** for < 5 miles.
-- Persist trip in DynamoDB (`TRIP#<id>`).
-- Notify drivers; handle their actions: **Accept**, **On the way**, **Trip started**, **Trip finished**.
-- Disable passenger buttons after driver acceptance.
-- English-only UI.
-
-Environment variables (set in `lambda.tf`):
-- `TABLE_NAME` = `ridebot-trips`
-- `PLACE_INDEX_NAME` = `ridebot-places`
-- `ROUTE_CALCULATOR_NAME` = `ridebot-routes`
-
----
-
-## 🤖 CI/CD (GitHub Actions with OIDC)
-
-Workflow: `.github/workflows/deploy.yml`
-
-- **Push to `main`** → `terraform plan` + `apply` (OIDC role: `arn:aws:iam::097635932419:role/ridebot-terraform-gha`).
-- **Manual run** (`workflow_dispatch`) with `action=destroy` to tear down infra.
-- **Post-apply step** resets Telegram webhook automatically:
-  1. Read `webhook_url` from `terraform output`.
-  2. Read token from SSM.
-  3. Call Telegram `setWebhook` with the new URL.
-
-Trust policy allows: branch `main` and environment `production` for destroy.
-
----
-
-## 🧪 Local cleanliness & backend
-
-If you previously had local state, you may clean it safely:
-
-```bash
-rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup
-terraform init -reconfigure
+Example item:
+```json
+{
+  "ride_id": "123e4567-e89b-12d3-a456-426614174000",
+  "user_id": "987654321",
+  "pickup": "123 Main St, Navarre FL",
+  "dropoff": "456 Gulf Breeze Pkwy, FL",
+  "status": "requested",
+  "created_at": "2025-09-20T12:00:00Z"
+}
 ```
 
-Remote backend: S3 bucket `ridebot-terraform-state`, key `global/terraform.tfstate`, lock table `ridebot-tf-locks`.
+---
+
+## 🔧 Troubleshooting
+
+- **Webhook returns 404** → redeploy or check API Gateway URL matches Telegram webhook.
+- **AccessDenied in Terraform** → ensure GitHub Actions role has required IAM permissions.
+- **State lock issues** → check DynamoDB table used for Terraform state locks.
 
 ---
 
-## ➕ Adding drivers
+## 💰 Cost considerations
 
-1. Update SSM `/ridebot/driver_profiles` JSON array with a new object:
-   ```json
-   {"chat_id":"111222333", "name":"New Driver", "car":"Camry"}
-   ```
-2. No redeploy needed — Lambda fetches from SSM at runtime (or on cold-start).
-3. Driver must **start a chat** with your bot to allow direct messages.
-
----
-
-## 🧰 Troubleshooting
-
-- **No driver notifications**: verify `/ridebot/driver_profiles`, driver chat IDs, and that drivers pressed **Start** with the bot.
-- **Webhook 404**: re-check API Gateway route `POST /telegram/webhook`, Lambda logs, and that webhook URL equals the current `terraform output -raw webhook_url`.
-- **AccessDenied in CI**: ensure the IAM policy attached to `ridebot-terraform-gha` includes required actions (Lambda, APIGW, DynamoDB, SSM, Logs, IAM where needed) and trust policy matches repo/branch.
+- **Lambda**: free tier covers 1M requests/month.
+- **API Gateway**: ~$1 per million requests.
+- **DynamoDB**: on-demand pricing; fits free tier for small usage.
+- **Amazon Location**: free tier (2,500 requests/month), then pay-per-request.
+- **SSM Parameter Store**: free for standard params.
 
 ---
 
-## 💸 Cost notes
-
-- Lambda + API Gateway + DynamoDB + Location are pay-per-use; typical dev costs are very low.
-- DynamoDB on-demand is recommended for simplicity.
-- Location Service charges per request (geocoding & routing). Cache repeated addresses if necessary.
-
----
-
-## 📄 License
-
-MIT
+© 2025 RideBot Infrastructure
