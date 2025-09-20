@@ -59,8 +59,8 @@ Secrets are stored in **AWS SSM Parameter Store**:
 Example driver config:
 ```json
 [
-  { "chat_id": "123456", "name": "Ruslan", "car": "Honda Accord" },
-  { "chat_id": "987654", "name": "Lenora", "car": "Toyota Sienna" }
+  { "chat_id": "123456", "name": "Driver1", "car": "Honda Accord" },
+  { "chat_id": "987654", "name": "Driver2", "car": "Toyota Sienna" }
 ]
 ```
 
