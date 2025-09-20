@@ -1,0 +1,20 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+crash.log
+override.tf
+override.tf.json
+*.tfvars
+*.tfvars.json
+
+# Python build (if you zip Lambda locally)
+__pycache__/
+*.pyc
+build/
+dist/
+*.zip
+
+# OS
+.DS_Store
