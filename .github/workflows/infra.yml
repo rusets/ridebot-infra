@@ -2,16 +2,25 @@ name: Deploy infra (Terraform)
 
 on:
   push:
-    branches: [ main ]         # run on push to main
-  workflow_dispatch: {}        # allow manual run
+    branches: [ main ]      # автоприменение при пуше в main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - destroy
 
 permissions:
-  id-token: write              # required for OIDC auth to AWS
+  id-token: write
   contents: read
 
 env:
   AWS_REGION: us-east-1
-  TF_WORKDIR: terraform        # path to your .tf files
+  TF_WORKDIR: terraform
 
 concurrency:
   group: infra-${{ github.ref }}
@@ -19,17 +28,17 @@ concurrency:
 
 jobs:
   plan:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKDIR }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::097635932419:role/ridebot-terraform-gha
@@ -49,26 +58,19 @@ jobs:
       - name: Terraform plan
         run: terraform plan -input=false -out=tfplan
 
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: ${{ env.TF_WORKDIR }}/tfplan
-
   apply:
     needs: [ plan ]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply'))
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
         working-directory: ${{ env.TF_WORKDIR }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::097635932419:role/ridebot-terraform-gha
@@ -82,6 +84,48 @@ jobs:
       - name: Terraform init
         run: terraform init -upgrade -input=false
 
-      # optional: re-generate plan to avoid artifact step
+      - name: Terraform plan (fresh)
+        run: terraform plan -input=false -out=tfplan
+
       - name: Terraform apply (auto-approve)
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Post-apply — reset Telegram webhook
+        id: webhook
+        run: |
+          set -e
+          WEBHOOK_URL="$(terraform output -raw webhook_url)"
+          TOKEN="$(aws ssm get-parameter --name /ridebot/telegram_bot_token --with-decryption --query 'Parameter.Value' --output text)"
+          curl -s -X POST "https://api.telegram.org/bot${TOKEN}/deleteWebhook" -d "drop_pending_updates=true" >/dev/null || true
+          curl -s -X POST "https://api.telegram.org/bot${TOKEN}/setWebhook" -d "url=${WEBHOOK_URL}" >/dev/null
+          curl -s "https://api.telegram.org/bot${TOKEN}/getWebhookInfo"
+
+  destroy:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    environment:
+      name: production    # можно защитить env ревьюерами в repo settings
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.TF_WORKDIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::097635932419:role/ridebot-terraform-gha
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -upgrade -input=false
+
+      - name: Terraform destroy (auto-approve)
+        run: terraform destroy -input=false -auto-approve
