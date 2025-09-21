@@ -18,56 +18,53 @@ from zoneinfo import ZoneInfo
 # ======================================================
 # Logging
 # ======================================================
-# Configure a module-level logger. CloudWatch will capture logs from stdout.
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # ======================================================
 # AWS clients (boto3)
 # ======================================================
-# SSM: to fetch secrets (Telegram token, driver profiles)
-# DynamoDB: primary database for sessions, profiles and trips
-# Location: Amazon Location Service for geocoding and routing
 ssm = boto3.client("ssm")
 dynamodb = boto3.resource("dynamodb")
 location = boto3.client("location")
 
 # ======================================================
-# Environment variables (injected by Lambda configuration / Terraform)
+# Environment variables
 # ======================================================
 TABLE_NAME = os.environ["TABLE_NAME"]
 PLACE_INDEX_NAME = os.environ["PLACE_INDEX_NAME"]
 ROUTE_CALCULATOR_NAME = os.environ["ROUTE_CALCULATOR_NAME"]
-
-# All user-facing date/time is displayed in this timezone (default: America/Chicago)
 TZ = ZoneInfo(os.environ.get("TIMEZONE", "America/Chicago"))
-
-# Number of calendar days to show in inline date picker (starting from today)
 DAYS_AHEAD = int(os.environ.get("PICKER_DAYS_AHEAD", "5"))
 
-# ------------------------------------------------------
-# Fare calculation parameters (configurable via env):
-#   - Base fare, per-mile, per-minute, fee, surge, minimum, etc.
-# These are read once per cold start.
-# ------------------------------------------------------
+# Fare config
 FARE_BASE = float(os.environ.get("FARE_BASE", "3.00"))
 FARE_PER_MILE = float(os.environ.get("FARE_PER_MILE", "2.50"))
 FARE_PER_MIN = float(os.environ.get("FARE_PER_MIN", "0.40"))
 FARE_FEE = float(os.environ.get("FARE_FEE",  "1.00"))
 FARE_MINIMUM = float(os.environ.get("FARE_MINIMUM", "8.00"))
-
-# Short-trip rule: if distance < threshold, enforce a higher minimum fare
 SHORT_TRIP_MILES_THRESHOLD = float(
     os.environ.get("SHORT_TRIP_MILES_THRESHOLD", "5.0"))
 SHORT_TRIP_MINIMUM = float(os.environ.get("SHORT_TRIP_MINIMUM", "10.0"))
 
 # ======================================================
-# Secrets (Telegram token, driver chat IDs, driver profiles)
-# We lazy-load and cache them in module-level globals to reduce SSM calls.
+# Defaults: drivers added directly in code (merged with SSM)
+# ======================================================
+DEFAULT_DRIVER_CHAT_IDS = [
+    "1441080197",  # Emil Mansimov
+    "7964155471",  # Amal Mansimov
+]
+DEFAULT_DRIVER_PROFILES = {
+    "1441080197": {"name": "Emil Mansimov", "car": "Kia Carnival"},
+    "7964155471": {"name": "Amal Mansimov", "car": "Kia Carnival"},
+}
+
+# ======================================================
+# Secrets cache
 # ======================================================
 _TELEGRAM_TOKEN = None
-_DRIVER_CHAT_IDS = None              # list[str]
-_DRIVER_PROFILES = None              # dict[str, {"name": "...", "car": "..."}]
+_DRIVER_CHAT_IDS = None          # list[str]
+_DRIVER_PROFILES = None          # dict[str, {"name": "...", "car": "..."}]
 
 
 def _get_secret(name, decrypt=True):
@@ -77,46 +74,46 @@ def _get_secret(name, decrypt=True):
 
 def ensure_secrets():
     """
-    Load Telegram token, driver chat IDs list, and driver profiles JSON from SSM.
-    This function is idempotent and caches values in module globals.
+    Load Telegram token, driver chat IDs, and driver profiles from SSM.
+    Then merge with DEFAULT_* so the two new drivers are always present.
     """
     global _TELEGRAM_TOKEN, _DRIVER_CHAT_IDS, _DRIVER_PROFILES
     if _TELEGRAM_TOKEN is None:
         _TELEGRAM_TOKEN = _get_secret("/ridebot/telegram_bot_token", True)
+
     if _DRIVER_CHAT_IDS is None:
-        # Comma-separated list of driver chat IDs in SSM: /ridebot/driver_chat_ids
-        # Example: "123456,987654"
         try:
             raw = _get_secret("/ridebot/driver_chat_ids", False)
             _DRIVER_CHAT_IDS = [x.strip() for x in raw.split(",") if x.strip()]
         except Exception:
             _DRIVER_CHAT_IDS = []
+        # merge defaults (no duplicates)
+        for did in DEFAULT_DRIVER_CHAT_IDS:
+            if did not in _DRIVER_CHAT_IDS:
+                _DRIVER_CHAT_IDS.append(did)
+
     if _DRIVER_PROFILES is None:
-        # JSON map of driver_id -> {name, car}, e.g. {"123456":{"name":"Ruslan","car":"Sienna"}}
-        # SSM param: /ridebot/driver_profiles
         try:
             prof_raw = _get_secret("/ridebot/driver_profiles", False)
-            _DRIVER_PROFILES = json.loads(prof_raw)
+            _DRIVER_PROFILES = json.loads(prof_raw) if prof_raw.strip() else {}
         except Exception:
             _DRIVER_PROFILES = {}
+        # merge defaults (defaults do not override existing)
+        for did, prof in DEFAULT_DRIVER_PROFILES.items():
+            _DRIVER_PROFILES.setdefault(did, prof)
 
 
 # ======================================================
-# DynamoDB resources
+# DynamoDB table handle
 # ======================================================
-# Reference the table object. All reads/writes go through this handle.
 table = dynamodb.Table(TABLE_NAME)
 
 # ======================================================
-# Utilities (numbers, time, phone, parsing)
+# Utilities
 # ======================================================
 
 
 def ddb_decimalize(obj):
-    """
-    Convert floats to Decimal recursively to satisfy DynamoDB types.
-    DynamoDB does not accept Python float due to precision; Decimal is required.
-    """
     if isinstance(obj, float):
         return Decimal(str(obj))
     if isinstance(obj, dict):
@@ -127,15 +124,10 @@ def ddb_decimalize(obj):
 
 
 def now_ts() -> int:
-    """Return epoch seconds in local TZ (for consistent storage/logging)."""
     return int(datetime.now(TZ).timestamp())
 
 
 def round_to_15m(dt: datetime) -> datetime:
-    """
-    Round a datetime up to the next 15-minute increment.
-    Used to normalize schedule times picked/parsed manually.
-    """
     minutes = (dt.minute + 14) // 15 * 15
     if minutes == 60:
         dt = dt.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
@@ -145,22 +137,14 @@ def round_to_15m(dt: datetime) -> datetime:
 
 
 def fmt_ampm(dt: datetime) -> str:
-    """Format datetime as 12-hour time like '6:30 PM' (in local TZ)."""
     return dt.astimezone(TZ).strftime("%I:%M %p").lstrip("0")
 
 
 def fmt_epoch_ampm(epoch: int) -> str:
-    """Format epoch seconds to 12-hour time string (local TZ)."""
     return fmt_ampm(datetime.fromtimestamp(int(epoch), TZ))
 
 
 def normalize_phone(text):
-    """
-    Normalize input phone number to E.164 where possible.
-    - Accepts +<country><number> with 8..15 digits
-    - If US 10 digits provided, prefixes +1
-    Returns None if format is invalid.
-    """
     if not text:
         return None
     digits = re.sub(r"[^\d+]", "", text.strip())
@@ -174,7 +158,6 @@ def normalize_phone(text):
     return None
 
 
-# Regexes for flexible date/time parsing from free-form text (if used)
 DATE_YMD = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 DATE_MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 TIME_HM_24 = re.compile(r"^(\d{1,2}):(\d{2})$")
@@ -183,7 +166,6 @@ TIME_HM_AMPM = re.compile(
 
 
 def _to_24h(h, m, ampm):
-    """Convert 12-hour clock parts to 24-hour integers."""
     h = int(h)
     m = int(m)
     ampm = ampm.lower().replace(".", "")
@@ -195,14 +177,6 @@ def _to_24h(h, m, ampm):
 
 
 def parse_when(text):
-    """
-    Parse strings like:
-      - 'today 6pm'
-      - 'tomorrow 2:30 PM'
-      - '2025-09-21 2:30 PM'
-      - '09/21/2025 2:30 pm'
-    Returns: (iso_text 'YYYY-MM-DD HH:MM', epoch_seconds) or (None, None)
-    """
     t = " ".join(text.strip().split())
     if not t:
         return (None, None)
@@ -246,10 +220,6 @@ def parse_when(text):
 
 
 def parse_date_only(text):
-    """
-    Parse date-only text like 'today', 'tomorrow', '2025-09-21', '09/21/2025'.
-    Returns (year, month, day) or None.
-    """
     t = text.strip().lower()
     now_local = datetime.now(TZ)
     if t == "today":
@@ -268,10 +238,6 @@ def parse_date_only(text):
 
 
 def parse_time_only(text):
-    """
-    Parse time-only text like '6pm', '6:30 pm', or '18:30'.
-    Returns (hour24, minute) or None.
-    """
     t = text.strip().lower().replace(" ", "")
     m = re.match(r"^(\d{1,2})([ap]m)$", t)
     if m:
@@ -290,20 +256,15 @@ def parse_time_only(text):
 
 
 def combine_date_time(y, m, d, hh, mm):
-    """Combine Y/M/D and H:M into a rounded datetime, return (iso 'YYYY-MM-DD HH:MM', epoch)."""
     dt = round_to_15m(datetime(y, m, d, hh, mm, tzinfo=TZ))
     return dt.strftime("%Y-%m-%d %H:%M"), int(dt.timestamp())
 
 # ======================================================
-# Inline date/time pickers (Telegram inline keyboards)
+# Inline pickers
 # ======================================================
 
 
 def build_date_buttons(trip_id, days_ahead=DAYS_AHEAD):
-    """
-    Build a vertical list of buttons for 'Today' and the next N-1 days.
-    Each row contains one date button with callback data 'datepick:<trip_id>:YYYY-MM-DD'.
-    """
     today_local = datetime.now(TZ).date()
     rows = []
     for i in range(days_ahead):
@@ -315,10 +276,6 @@ def build_date_buttons(trip_id, days_ahead=DAYS_AHEAD):
 
 
 def build_time_buttons(trip_id, y, m, d):
-    """
-    Build time slots from 6:00 AM to midnight (exclusive) in 30-minute steps.
-    Each button sends 'timepick:<trip_id>:<epoch_seconds>' for the exact slot.
-    """
     rows = []
     start = datetime(y, m, d, 6, 0, tzinfo=TZ)
     end = datetime(y, m, d, 23, 59, tzinfo=TZ)
@@ -335,15 +292,11 @@ def build_time_buttons(trip_id, y, m, d):
     return rows
 
 # ======================================================
-# Telegram API helpers (minimal wrapper over HTTP)
+# Telegram API helpers
 # ======================================================
 
 
 def tg_request(method, fields):
-    """
-    Make a Telegram Bot API call with x-www-form-urlencoded body.
-    Returns parsed JSON or {"ok": True} on non-JSON responses.
-    """
     ensure_secrets()
     url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}/{method}"
     data = urllib.parse.urlencode(fields).encode("utf-8")
@@ -358,11 +311,6 @@ def tg_request(method, fields):
 
 
 def tg_send_message(chat_id, text, buttons=None, reply_kb=None):
-    """
-    Send a message to chat_id.
-    - buttons → inline keyboard (list of rows with {text, callback_data})
-    - reply_kb → custom reply keyboard (not inline)
-    """
     payload = {"chat_id": str(chat_id), "text": text}
     if buttons:
         payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
@@ -373,10 +321,6 @@ def tg_send_message(chat_id, text, buttons=None, reply_kb=None):
 
 
 def tg_edit_text(chat_id, message_id, text, clear_keyboard=False):
-    """
-    Edit an existing message text (and optionally clear inline keyboard).
-    Useful to disable buttons after action (e.g., confirm/accept).
-    """
     payload = {"chat_id": str(chat_id), "message_id": int(
         message_id), "text": text}
     if clear_keyboard:
@@ -385,17 +329,12 @@ def tg_edit_text(chat_id, message_id, text, clear_keyboard=False):
 
 
 def tg_edit_reply_markup_clear(chat_id, message_id):
-    """
-    Remove inline keyboard from an existing message (leave text intact).
-    Used as a fallback when editMessageText fails for any reason.
-    """
     payload = {"chat_id": str(chat_id), "message_id": int(
         message_id), "reply_markup": json.dumps({"inline_keyboard": []})}
     return tg_request("editMessageReplyMarkup", payload)
 
 
 def tg_set_commands():
-    """Register bot command list shown in Telegram UI."""
     cmds = [
         {"command": "start", "description": "Open menu"},
         {"command": "menu", "description": "Open menu"},
@@ -406,17 +345,11 @@ def tg_set_commands():
     return tg_request("setMyCommands", {"commands": json.dumps(cmds)})
 
 # ======================================================
-# Amazon Location + Fare logic
+# Amazon Location + Fare
 # ======================================================
 
 
 def calc_fare(miles, minutes):
-    """
-    Calculate fare based on configured rules.
-    - Enforce FARE_MINIMUM always.
-    - If miles < SHORT_TRIP_MILES_THRESHOLD, enforce SHORT_TRIP_MINIMUM.
-    Returns rounded float (2 decimals).
-    """
     fare = FARE_BASE + (miles * FARE_PER_MILE) + \
         (minutes * FARE_PER_MIN) + FARE_FEE
     fare = max(fare, FARE_MINIMUM)
@@ -426,16 +359,10 @@ def calc_fare(miles, minutes):
 
 
 def geocode_once(text):
-    """
-    Try to geocode an address string with Amazon Location Place Index.
-    Fallback: append 'FL, USA' hint if first attempt returns no results.
-    Returns dict {label, lon, lat} or None on failure.
-    """
     try:
         def _search(q):
             return location.search_place_index_for_text(
-                IndexName=PLACE_INDEX_NAME, Text=q, MaxResults=1,
-                FilterCountries=["USA"], Language="en"
+                IndexName=PLACE_INDEX_NAME, Text=q, MaxResults=1, FilterCountries=["USA"], Language="en"
             )
         r = _search(text)
         results = r.get("Results", [])
@@ -453,10 +380,6 @@ def geocode_once(text):
 
 
 def calc_route(dep, dest):
-    """
-    Calculate route between departure and destination using Amazon Location.
-    Returns tuple (distance_meters, duration_seconds) or (None, None) on failure.
-    """
     try:
         r = location.calculate_route(
             CalculatorName=ROUTE_CALCULATOR_NAME,
@@ -470,53 +393,39 @@ def calc_route(dep, dest):
         return None, None
 
 # ======================================================
-# Session & Profile management (DynamoDB)
-# Key design:
-#   pk = USER#<user_id>, sk in {SESSION, PROFILE, TRIP#<id>}
-#   pk = TRIP#<trip_id>,  sk = META
+# Sessions & Profiles (DynamoDB)
 # ======================================================
 
 
 def get_session(user_id):
-    """Fetch session state for a user (if any)."""
     resp = table.get_item(Key={"pk": f"USER#{user_id}", "sk": "SESSION"})
     return resp.get("Item")
 
 
 def put_session(user_id, state, data=None):
-    """Write/update session state for a user."""
     table.put_item(Item={"pk": f"USER#{user_id}",
                    "sk": "SESSION", "state": state, "data": data or {}})
 
 
 def clear_session(user_id):
-    """Delete session record for a user."""
     table.delete_item(Key={"pk": f"USER#{user_id}", "sk": "SESSION"})
 
 
 def get_profile(user_id):
-    """Get user's profile (currently stores phone)."""
     resp = table.get_item(Key={"pk": f"USER#{user_id}", "sk": "PROFILE"})
     return resp.get("Item")
 
 
 def set_profile_phone(user_id, phone):
-    """Persist user's phone in profile for reuse in future trips."""
     table.put_item(Item={"pk": f"USER#{user_id}",
                    "sk": "PROFILE", "phone": phone, "updated_at": now_ts()})
 
 # ======================================================
-# Trip management (DynamoDB)
+# Trips (DynamoDB)
 # ======================================================
 
 
 def save_trip(user_id, dep, dest, miles, minutes, fare):
-    """
-    Create a new trip with a random 6-char ID.
-    Store both:
-      - USER#<user_id>/TRIP#<id> (for quick 'my trips' queries)
-      - TRIP#<id>/META (central trip metadata)
-    """
     tid = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     created = now_ts()
     dep_ddb = ddb_decimalize(dep)
@@ -539,7 +448,6 @@ def save_trip(user_id, dep, dest, miles, minutes, fare):
 
 
 def set_trip_when_epoch(trip_id, epoch):
-    """Set desired time from epoch seconds; store as both text and epoch."""
     dt = round_to_15m(datetime.fromtimestamp(int(epoch), TZ))
     iso = dt.strftime("%Y-%m-%d %H:%M")
     table.update_item(
@@ -550,7 +458,6 @@ def set_trip_when_epoch(trip_id, epoch):
 
 
 def set_trip_when(trip_id, when_text, when_epoch):
-    """Set desired time from prepared text + epoch."""
     table.update_item(
         Key={"pk": f"TRIP#{trip_id}", "sk": "META"},
         UpdateExpression="SET desired_time_text=:t, desired_time_epoch=:e",
@@ -559,7 +466,6 @@ def set_trip_when(trip_id, when_text, when_epoch):
 
 
 def set_trip_phone(trip_id, phone_e164):
-    """Store passenger phone on the trip META."""
     table.update_item(
         Key={"pk": f"TRIP#{trip_id}", "sk": "META"},
         UpdateExpression="SET passenger_phone=:p",
@@ -568,11 +474,6 @@ def set_trip_phone(trip_id, phone_e164):
 
 
 def set_trip_status(trip_id, user_id, status):
-    """
-    Update trip status on both:
-      - TRIP#<id>/META (global view)
-      - USER#<uid>/TRIP#<id> (user-centric view)
-    """
     table.update_item(
         Key={"pk": f"TRIP#{trip_id}", "sk": "META"},
         UpdateExpression="SET #s=:s",
@@ -588,7 +489,6 @@ def set_trip_status(trip_id, user_id, status):
 
 
 def set_trip_driver(trip_id, driver_id, driver_name, driver_car):
-    """Attach accepted driver information to trip META."""
     table.update_item(
         Key={"pk": f"TRIP#{trip_id}", "sk": "META"},
         UpdateExpression="SET driver_id=:d, driver_name=:n, driver_car=:c",
@@ -598,16 +498,11 @@ def set_trip_driver(trip_id, driver_id, driver_name, driver_car):
 
 
 def get_trip_meta(trip_id):
-    """Fetch the trip META (central record) by trip_id."""
     resp = table.get_item(Key={"pk": f"TRIP#{trip_id}", "sk": "META"})
     return resp.get("Item")
 
 
 def list_recent_trips(chat_id, user_id):
-    """
-    Return the 5 most recent trips for the user (based on SK prefix 'TRIP#').
-    Render a simple text summary and send to the user.
-    """
     resp = table.query(
         KeyConditionExpression=Key("pk").eq(
             f"USER#{user_id}") & Key("sk").begins_with("TRIP#"),
@@ -635,28 +530,20 @@ def list_recent_trips(chat_id, user_id):
 
 
 # ======================================================
-# Main menu (reply keyboard)
+# Main menu
 # ======================================================
 MAIN_MENU = [["📝 New ride", "🚖 My trips"], ["⚙️ Settings", "ℹ️ Help"]]
 
 
 def show_menu(chat_id):
-    """Display the main menu reply keyboard to the user."""
     tg_send_message(chat_id, "Choose an action:", reply_kb=MAIN_MENU)
 
 # ======================================================
-# Lambda function entry point
-# Handles Telegram update webhooks (message + callback_query)
+# Lambda handler
 # ======================================================
 
 
 def lambda_handler(event, context):
-    """
-    Telegram posts updates to API Gateway, which forwards to this handler.
-    We parse the JSON 'update' and branch on:
-      - update.message        → text commands and conversation states
-      - update.callback_query → inline button callbacks (date/time, confirm, etc.)
-    """
     try:
         body = event.get("body", "")
         if event.get("isBase64Encoded"):
@@ -666,14 +553,13 @@ def lambda_handler(event, context):
         logger.exception("Failed to parse body")
         return {"statusCode": 200, "body": "ok"}
 
-    # --------------- Handle standard messages ---------------
+    # -------- message --------
     if "message" in update:
         msg = update["message"]
         chat_id = msg["chat"]["id"]
         user_id = msg["from"]["id"]
         text = (msg.get("text") or "").strip()
 
-        # Commands: /start, /menu → reset, show menu, set commands
         if text in ("/start", "/menu"):
             clear_session(user_id)
             tg_set_commands()
@@ -682,35 +568,29 @@ def lambda_handler(event, context):
             put_session(user_id, "idle", {})
             return {"statusCode": 200, "body": "ok"}
 
-        # Start new ride flow
         if text in ("/newride", "📝 New ride"):
             clear_session(user_id)
             tg_send_message(chat_id, "Please enter the pickup address.")
             put_session(user_id, "await_pickup", {})
             return {"statusCode": 200, "body": "ok"}
 
-        # Show recent trips
         if text in ("/mytrips", "🚖 My trips"):
             list_recent_trips(chat_id, user_id)
             show_menu(chat_id)
             return {"statusCode": 200, "body": "ok"}
 
-        # Show help
         if text in ("/help", "ℹ️ Help"):
             show_menu(chat_id)
-            tg_send_message(
-                chat_id,
-                "Flow:\n1) Pickup & drop-off\n2) Pick date & time\n"
-                "3) Enter phone (saved for next time)\n4) Confirm — driver will contact you via SMS."
-            )
+            tg_send_message(chat_id,
+                            "Flow:\n1) Pickup & drop-off\n2) Pick date & time\n"
+                            "3) Enter phone (saved for next time)\n4) Confirm — driver will contact you via SMS."
+                            )
             return {"statusCode": 200, "body": "ok"}
 
-        # Load session to continue multi-step capture
         session = get_session(user_id) or {}
         state = session.get("state")
         sdata = session.get("data", {}) or {}
 
-        # While choosing date/time via inline picker, ignore free text to prevent inconsistencies
         if state and isinstance(state, str) and state.startswith("await_when:"):
             tg_send_message(chat_id, "Please use 📆 Pick date & time.")
             return {"statusCode": 200, "body": "ok"}
@@ -719,7 +599,6 @@ def lambda_handler(event, context):
             tg_send_message(chat_id, "Please use 📆 Pick date & time.")
             return {"statusCode": 200, "body": "ok"}
 
-        # Phone entry step
         if state and isinstance(state, str) and state.startswith("await_phone:"):
             trip_id = state.split(":", 1)[1]
             phone = normalize_phone(text)
@@ -742,7 +621,6 @@ def lambda_handler(event, context):
             clear_session(user_id)
             return {"statusCode": 200, "body": "ok"}
 
-        # Address capture: first pickup, then drop-off
         if state == "await_pickup":
             put_session(user_id, "await_dropoff", {"pickup_raw": text})
             tg_send_message(chat_id, "Got it. Now enter the drop-off address:")
@@ -765,7 +643,6 @@ def lambda_handler(event, context):
                 show_menu(chat_id)
                 return {"statusCode": 200, "body": "ok"}
 
-            # Route calculation and fare estimation
             distance_m, duration_s = calc_route(dep, dest)
             if not distance_m or not duration_s:
                 tg_send_message(
@@ -779,7 +656,6 @@ def lambda_handler(event, context):
             fare = calc_fare(miles, minutes)
             trip_id = save_trip(user_id, dep, dest, miles, minutes, fare)
 
-            # Offer the date/time picker for scheduling
             buttons = [[{"text": "📆 Pick date & time",
                          "callback_data": f"datesel:{trip_id}"}]]
             msg = (
@@ -792,11 +668,10 @@ def lambda_handler(event, context):
             put_session(user_id, f"await_when:{trip_id}", {})
             return {"statusCode": 200, "body": "ok"}
 
-        # Fallback: show menu for unknown text
         show_menu(chat_id)
         return {"statusCode": 200, "body": "ok"}
 
-    # --------------- Handle inline callbacks ---------------
+    # -------- callback_query --------
     if "callback_query" in update:
         cq = update["callback_query"]
         chat_id = cq["message"]["chat"]["id"]
@@ -804,14 +679,12 @@ def lambda_handler(event, context):
         data = cq.get("data", "")
         ensure_secrets()
 
-        # Start date selection (shows list of days)
         if data.startswith("datesel:"):
             trip_id = data.split(":", 1)[1]
             kb = build_date_buttons(trip_id)
             tg_send_message(chat_id, "Choose a date:", buttons=kb)
             return {"statusCode": 200, "body": "ok"}
 
-        # A specific date was chosen → confirm text + show times for that date
         if data.startswith("datepick:"):
             _, trip_id, iso_d = data.split(":")
             y, m, d = map(int, iso_d.split("-"))
@@ -825,7 +698,6 @@ def lambda_handler(event, context):
             tg_send_message(chat_id, f"Choose a time for {iso_d}:", buttons=kb)
             return {"statusCode": 200, "body": "ok"}
 
-        # A specific time was chosen → save epoch + ask for phone / use saved
         if data.startswith("timepick:"):
             _, trip_id, epoch = data.split(":")
             epoch_i = int(epoch)
@@ -838,7 +710,6 @@ def lambda_handler(event, context):
                 tg_edit_reply_markup_clear(chat_id, msg_id)
             return after_when_ask_phone_or_profile(chat_id, chat_id, trip_id)
 
-        # Use saved phone from PROFILE (if present)
         if data.startswith("usephone:"):
             trip_id = data.split(":", 1)[1]
             prof = get_profile(chat_id) or {}
@@ -861,14 +732,12 @@ def lambda_handler(event, context):
             )
             return {"statusCode": 200, "body": "ok"}
 
-        # Switch to entering a new phone number (goes back to message flow)
         if data.startswith("changephone:"):
             trip_id = data.split(":", 1)[1]
             tg_send_message(chat_id, "Please enter your phone number.")
             put_session(chat_id, f"await_phone:{trip_id}", {})
             return {"statusCode": 200, "body": "ok"}
 
-        # Client taps Confirm → validate fields and broadcast to drivers
         if data.startswith("confirm:"):
             trip_id = data.split(":", 1)[1]
             meta = get_trip_meta(trip_id)
@@ -878,7 +747,6 @@ def lambda_handler(event, context):
                 return {"statusCode": 200, "body": "ok"}
             current = meta.get("status")
             if current in ("pending", "accepted", "declined"):
-                # Already processed; make the client's button inert
                 try:
                     tg_edit_text(
                         chat_id, msg_id, f"ℹ️ Request #{trip_id} is already {current}.", clear_keyboard=True)
@@ -893,19 +761,16 @@ def lambda_handler(event, context):
                     chat_id, "Please enter your phone number first.")
                 return {"statusCode": 200, "body": "ok"}
 
-            # Mark as pending and disable client's Confirm button
             set_trip_status(trip_id, meta["user_id"], "pending")
             try:
                 tg_edit_text(
-                    chat_id,
-                    msg_id,
+                    chat_id, msg_id,
                     f"✅ Request #{trip_id} sent to the driver.\nDriver will contact you via SMS.",
                     clear_keyboard=True
                 )
             except Exception:
                 tg_edit_reply_markup_clear(chat_id, msg_id)
 
-            # Notify all drivers (fan-out)
             phone = meta.get("passenger_phone")
             fare = float(meta.get("fare", 0))
             dep = meta.get("dep_label", "")
@@ -929,9 +794,7 @@ def lambda_handler(event, context):
                 )
             return {"statusCode": 200, "body": "ok"}
 
-        # Driver accepts a ride
         if data.startswith("accept:"):
-            # format: accept:<trip_id>:<driver_id>
             try:
                 _, trip_id, driver_id = data.split(":")
             except ValueError:
@@ -943,7 +806,6 @@ def lambda_handler(event, context):
                     chat_id, msg_id, f"❌ Ride #{trip_id} not found.", clear_keyboard=True)
                 return {"statusCode": 200, "body": "ok"}
 
-            # Prevent double-accept (race between drivers)
             if meta.get("status") == "accepted":
                 taken_by = meta.get("driver_name", "another driver")
                 try:
@@ -953,14 +815,12 @@ def lambda_handler(event, context):
                     tg_edit_reply_markup_clear(chat_id, msg_id)
                 return {"statusCode": 200, "body": "ok"}
 
-            # Attach driver info to trip (from profiles map)
             prof = _DRIVER_PROFILES.get(str(driver_id), {})
             dname = prof.get("name", "Driver")
             dcar = prof.get("car",  "Car")
             set_trip_driver(trip_id, driver_id, dname, dcar)
             set_trip_status(trip_id, meta["user_id"], "accepted")
 
-            # Acknowledge to driver and inform passenger
             try:
                 tg_edit_text(
                     chat_id, msg_id, f"✅ Ride #{trip_id} accepted.", clear_keyboard=True)
@@ -975,9 +835,7 @@ def lambda_handler(event, context):
             tg_send_message(chat_id, f"✅ Client notified for ride #{trip_id}.")
             return {"statusCode": 200, "body": "ok"}
 
-        # Driver declines a ride
         if data.startswith("decline:"):
-            # format: decline:<trip_id>:<driver_id>
             try:
                 _, trip_id, driver_id = data.split(":")
             except ValueError:
@@ -990,26 +848,20 @@ def lambda_handler(event, context):
             except Exception:
                 tg_edit_reply_markup_clear(chat_id, msg_id)
 
-            # If still pending, mark as declined and inform passenger
             if meta and meta.get("status") == "pending":
                 set_trip_status(trip_id, meta["user_id"], "declined")
                 tg_send_message(
                     meta["user_chat_id"], f"❌ Sorry, your request #{trip_id} was declined.")
             return {"statusCode": 200, "body": "ok"}
 
-    # --------------- Default OK ---------------
     return {"statusCode": 200, "body": "ok"}
 
 # ======================================================
-# Helper: ask for phone or reuse saved phone after time selected
+# Helper after time selection
 # ======================================================
 
 
 def after_when_ask_phone_or_profile(chat_id, user_id, trip_id):
-    """
-    After date/time is chosen, offer to reuse saved phone or ask for new number.
-    Returns a Lambda-style HTTP response dict.
-    """
     prof = get_profile(user_id) or {}
     saved_phone = prof.get("phone")
     if saved_phone:
@@ -1022,8 +874,6 @@ def after_when_ask_phone_or_profile(chat_id, user_id, trip_id):
             ]
         )
     else:
-        # Will transition to 'await_phone:<trip_id>' and wait for user's message input
-        tg_send_message(
-            chat_id, "Time saved. Please enter your phone numberttt.")
+        tg_send_message(chat_id, "Time saved. Please enter your phone number.")
         put_session(user_id, f"await_phone:{trip_id}", {})
     return {"statusCode": 200, "body": "ok"}
