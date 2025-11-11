@@ -15,7 +15,6 @@ flowchart TD
   LBD --> SSM["SSM Parameter Store<br/>/ridebot/*"]
   LBD --> LOGS["CloudWatch Logs"]
 ```
-*If GitHub still fails to render, ensure the fenced block starts with exactly <code>```mermaid</code> and you are viewing it on github.com (Mermaid is not rendered in some IDE previews).*
 
 ---
 
