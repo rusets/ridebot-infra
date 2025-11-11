@@ -94,11 +94,6 @@ Example driver config:
 
 ---
 
-## 📸 Screenshots
-
-_(Add your bot screenshots here from Telegram UI – ride request, confirmation, etc.)_
-
----
 
 ## 🛠 Tech Stack
 
