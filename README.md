@@ -7,7 +7,24 @@ The bot lets users order a ride via Telegram, calculates routes & prices with **
 
 ## 🌐 Architecture
 
-![Architecture Diagram](./docs/architecture.png)
+```mermaid
+flowchart LR
+    TG["Telegram User"] --> APIGW["API Gateway v2<br/>(HTTP API)"]
+    APIGW --> LBD["AWS Lambda<br/>(app.py)"]
+    LBD --> GEO["Amazon Location Service<br/>PlaceIndex & RouteCalculator"]
+    LBD --> DDB["DynamoDB<br/>ridebot-trips"]
+    LBD --> SSM["SSM Parameter Store<br/>/ridebot/*"]
+    LBD --> LOGS["CloudWatch Logs"]
+
+    subgraph AWS
+      APIGW
+      LBD
+      GEO
+      DDB
+      SSM
+      LOGS
+    end
+```
 
 **Components:**
 - **Terraform** – manages all infrastructure (API Gateway, Lambda, DynamoDB, IAM, SSM, Amazon Location).  
@@ -95,5 +112,8 @@ _(Add your bot screenshots here from Telegram UI – ride request, confirmation,
 
 ---
 
-## 📄 License
-MIT
+## 🧾 License
+
+Released under the **MIT License** — feel free to use, fork, and learn from it.  
+© Ruslan Dashkin (🚀Ruslan AWS)
+Branding name “🚀Ruslan AWS” and related visuals are protected; commercial reuse or rebranding without permission is prohibited.
