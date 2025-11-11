@@ -15,29 +15,20 @@ import urllib.request
 import urllib.parse
 from zoneinfo import ZoneInfo
 
-# ======================================================
-# Logging
-# ======================================================
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# ======================================================
-# AWS clients (boto3)
-# ======================================================
 ssm = boto3.client("ssm")
 dynamodb = boto3.resource("dynamodb")
 location = boto3.client("location")
 
-# ======================================================
-# Environment variables
-# ======================================================
+
 TABLE_NAME = os.environ["TABLE_NAME"]
 PLACE_INDEX_NAME = os.environ["PLACE_INDEX_NAME"]
 ROUTE_CALCULATOR_NAME = os.environ["ROUTE_CALCULATOR_NAME"]
 TZ = ZoneInfo(os.environ.get("TIMEZONE", "America/Chicago"))
 DAYS_AHEAD = int(os.environ.get("PICKER_DAYS_AHEAD", "5"))
 
-# Fare config
 FARE_BASE = float(os.environ.get("FARE_BASE", "3.00"))
 FARE_PER_MILE = float(os.environ.get("FARE_PER_MILE", "2.50"))
 FARE_PER_MIN = float(os.environ.get("FARE_PER_MIN", "0.40"))
@@ -47,24 +38,20 @@ SHORT_TRIP_MILES_THRESHOLD = float(
     os.environ.get("SHORT_TRIP_MILES_THRESHOLD", "5.0"))
 SHORT_TRIP_MINIMUM = float(os.environ.get("SHORT_TRIP_MINIMUM", "10.0"))
 
-# ======================================================
-# Defaults: drivers added directly in code (merged with SSM)
-# ======================================================
+
 DEFAULT_DRIVER_CHAT_IDS = [
-    "1441080197",  # Emil Mansimov
-    "7964155471",  # Amal Mansimov
+    "1441080197",  
+    "7964155471",  
 ]
 DEFAULT_DRIVER_PROFILES = {
     "1441080197": {"name": "Emil Mansimov", "car": "Kia Carnival"},
     "7964155471": {"name": "Amal Mansimov", "car": "Kia Carnival"},
 }
 
-# ======================================================
-# Secrets cache
-# ======================================================
+
 _TELEGRAM_TOKEN = None
-_DRIVER_CHAT_IDS = None          # list[str]
-_DRIVER_PROFILES = None          # dict[str, {"name": "...", "car": "..."}]
+_DRIVER_CHAT_IDS = None         
+_DRIVER_PROFILES = None          
 
 
 def _get_secret(name, decrypt=True):
@@ -87,7 +74,6 @@ def ensure_secrets():
             _DRIVER_CHAT_IDS = [x.strip() for x in raw.split(",") if x.strip()]
         except Exception:
             _DRIVER_CHAT_IDS = []
-        # merge defaults (no duplicates)
         for did in DEFAULT_DRIVER_CHAT_IDS:
             if did not in _DRIVER_CHAT_IDS:
                 _DRIVER_CHAT_IDS.append(did)
@@ -98,20 +84,12 @@ def ensure_secrets():
             _DRIVER_PROFILES = json.loads(prof_raw) if prof_raw.strip() else {}
         except Exception:
             _DRIVER_PROFILES = {}
-        # merge defaults (defaults do not override existing)
         for did, prof in DEFAULT_DRIVER_PROFILES.items():
             _DRIVER_PROFILES.setdefault(did, prof)
 
 
-# ======================================================
-# DynamoDB table handle
-# ======================================================
+
 table = dynamodb.Table(TABLE_NAME)
-
-# ======================================================
-# Utilities
-# ======================================================
-
 
 def ddb_decimalize(obj):
     if isinstance(obj, float):
@@ -259,10 +237,6 @@ def combine_date_time(y, m, d, hh, mm):
     dt = round_to_15m(datetime(y, m, d, hh, mm, tzinfo=TZ))
     return dt.strftime("%Y-%m-%d %H:%M"), int(dt.timestamp())
 
-# ======================================================
-# Inline pickers
-# ======================================================
-
 
 def build_date_buttons(trip_id, days_ahead=DAYS_AHEAD):
     today_local = datetime.now(TZ).date()
@@ -290,10 +264,6 @@ def build_time_buttons(trip_id, y, m, d):
         rows.append(
             [{"text": "No times available", "callback_data": f"datesel:{trip_id}"}])
     return rows
-
-# ======================================================
-# Telegram API helpers
-# ======================================================
 
 
 def tg_request(method, fields):
@@ -344,10 +314,6 @@ def tg_set_commands():
     ]
     return tg_request("setMyCommands", {"commands": json.dumps(cmds)})
 
-# ======================================================
-# Amazon Location + Fare
-# ======================================================
-
 
 def calc_fare(miles, minutes):
     fare = FARE_BASE + (miles * FARE_PER_MILE) + \
@@ -392,10 +358,6 @@ def calc_route(dep, dest):
     except Exception:
         return None, None
 
-# ======================================================
-# Sessions & Profiles (DynamoDB)
-# ======================================================
-
 
 def get_session(user_id):
     resp = table.get_item(Key={"pk": f"USER#{user_id}", "sk": "SESSION"})
@@ -419,10 +381,6 @@ def get_profile(user_id):
 def set_profile_phone(user_id, phone):
     table.put_item(Item={"pk": f"USER#{user_id}",
                    "sk": "PROFILE", "phone": phone, "updated_at": now_ts()})
-
-# ======================================================
-# Trips (DynamoDB)
-# ======================================================
 
 
 def save_trip(user_id, dep, dest, miles, minutes, fare):
@@ -529,19 +487,11 @@ def list_recent_trips(chat_id, user_id):
     tg_send_message(chat_id, "Your recent trips:\n\n" + "\n\n".join(lines))
 
 
-# ======================================================
-# Main menu
-# ======================================================
 MAIN_MENU = [["📝 New ride", "🚖 My trips"], ["⚙️ Settings", "ℹ️ Help"]]
 
 
 def show_menu(chat_id):
     tg_send_message(chat_id, "Choose an action:", reply_kb=MAIN_MENU)
-
-# ======================================================
-# Lambda handler
-# ======================================================
-
 
 def lambda_handler(event, context):
     try:
