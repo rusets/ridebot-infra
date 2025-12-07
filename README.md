@@ -109,6 +109,33 @@ Example driver config:
 
 ---
 
+##  Future Improvements
+
+Planned enhancements to evolve this demo into a more robust, production-aligned service:
+
+### **1. Observability**
+- Add structured JSON logging (Powertools).
+- Add basic CloudWatch dashboards for Lambda & API Gateway.
+
+### **2. Security**
+- Migrate SSM parameters to a dedicated KMS key.
+- Introduce least-privilege IAM boundaries.
+
+### **3. Data Model**
+- Add TTL for user sessions and old trips.
+- Add driver-centric GSI for listing active/assigned rides.
+
+### **4. API & UX**
+- Add `/health` endpoint.
+- Add optional SMS notification (SNS) for confirmations.
+- Add static map preview for pickup/dropoff points.
+
+### **5. Infrastructure**
+- Add staging environment + GitHub Actions protection rules.
+- Add pre-commit hooks (tflint, tfsec, checkov).
+
+---
+
 
 ##  Tech Stack
 
