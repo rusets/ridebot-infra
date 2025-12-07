@@ -3,7 +3,7 @@
 # Purpose: read bot token and driver chat ID
 ############################################
 data "aws_ssm_parameter" "telegram_token" {
-  name            = "/ridebot/telegram_bot_token"
+  name            = var.ssm_telegram_token_name
   with_decryption = true
 }
 

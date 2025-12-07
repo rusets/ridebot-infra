@@ -17,7 +17,7 @@ resource "aws_iam_role" "lambda_role" {
 
 ############################################
 # IAM — Lambda Policy Document
-# Purpose: define least-privilege permissions
+# Purpose: least-privilege access for Lambda
 ############################################
 data "aws_iam_policy_document" "lambda_policy_doc" {
   statement {
@@ -34,18 +34,28 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
   }
 
   statement {
-    sid    = "DynamoDBTableAccess"
+    sid    = "DynamoDBTableItems"
     effect = "Allow"
     actions = [
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
       "dynamodb:GetItem",
-      "dynamodb:Query",
       "dynamodb:DeleteItem"
     ]
     resources = [
+      aws_dynamodb_table.trips.arn
+    ]
+  }
+
+  statement {
+    sid    = "DynamoDBQuery"
+    effect = "Allow"
+    actions = [
+      "dynamodb:Query"
+    ]
+    resources = [
       aws_dynamodb_table.trips.arn,
-      "${aws_dynamodb_table.trips.arn}/index/*"
+      "${aws_dynamodb_table.trips.arn}/index/trip-id-index"
     ]
   }
 
@@ -62,9 +72,11 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
   }
 
   statement {
-    sid     = "KMSDecryptForSSM"
-    effect  = "Allow"
-    actions = ["kms:Decrypt"]
+    sid    = "KMSDecryptForSSM"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt"
+    ]
     resources = [
       "arn:${data.aws_partition.current.partition}:kms:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"
     ]

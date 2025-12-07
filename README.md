@@ -1,11 +1,23 @@
-# 🚖 RideBot Infra
+#  RideBot Infra
 
-Cloud-native taxi booking assistant built with **AWS + Terraform + Telegram Bot**.  
+<p align="center">
+  <img src="https://img.shields.io/badge/IaC-Terraform-blueviolet" alt="Terraform"/>
+  <img src="https://img.shields.io/badge/Cloud-AWS-orange" alt="AWS"/>
+  <img src="https://img.shields.io/badge/Runtime-Lambda-yellow" alt="Lambda"/>
+  <img src="https://img.shields.io/badge/API-API%20Gateway-9cf" alt="API Gateway"/>
+  <img src="https://img.shields.io/badge/Database-DynamoDB-4053D6" alt="DynamoDB"/>
+  <img src="https://img.shields.io/badge/Maps-AWS%20Location%20Service-blue" alt="Location Service"/>
+  <img src="https://img.shields.io/badge/Webhook-Telegram-26A5E4" alt="Telegram"/>
+  <img src="https://img.shields.io/badge/Validation-tfsec%20%7C%20tflint%20%7C%20checkov-brightgreen" alt="Validation"/>
+  <img src="https://img.shields.io/badge/Region-us--east--1-007EC6" alt="Region"/>
+</p>
+
+Cloud-native ride booking system built with **AWS + Terraform + Telegram Bot**.  
 The bot lets users order a ride via Telegram, calculates routes & prices with **Amazon Location Service**, stores trips in **DynamoDB**, and notifies drivers instantly.
-
+> Educational/demo implementation of a serverless ride-booking workflow using AWS services. Not intended as a commercial multi-tenant platform.
 ---
 
-## 🌐 Architecture
+##  Architecture
 
 ```mermaid
 flowchart LR
@@ -37,21 +49,24 @@ flowchart LR
 
 ---
 
-## 📂 Repository structure
+## **Project Structure**
 
 ```
 ridebot-infra/
-│
-├── terraform/         # Infrastructure as Code (Terraform .tf files)
-├── lambda_src/        # Source code for AWS Lambda
-├── docs/              # Documentation, diagrams, guides
-│   └── README.md      # Technical documentation
-└── README.md          # This file (project overview)
+├── .github/          # GitHub workflows (infra.yml)
+├── terraform/        # All Terraform infrastructure (API, Lambda, DynamoDB, SSM, Location)
+├── lambda_src/       # Lambda function source code (app.py)
+├── docs/             # ADRs, technical docs, limitations
+├── .tflint.hcl       # Linter configuration for Terraform
+├── LICENSE           # MIT license
+└── README.md         # Project overview (main root README)
 ```
+
+**Full detailed structure:** see [`docs/TECHNICAL.md`](./docs/TECHNICAL.md)
 
 ---
 
-## 🚀 Deployment
+##  Deployment
 
 ### 1. Local (Terraform)
 ```bash
@@ -67,7 +82,7 @@ terraform apply -auto-approve
 
 ---
 
-## 🔑 Secrets & Parameters
+##  Secrets & Parameters
 
 Secrets are stored in **AWS SSM Parameter Store**:
 - `/ridebot/telegram_bot_token` – Telegram bot token.  
@@ -83,19 +98,19 @@ Example driver config:
 
 ---
 
-## 👨‍💻 Features
+## Features
 
-✅ Order ride via Telegram (pick-up & drop-off)  
-✅ Price calculation (minimum $10 for < 5 miles)  
-✅ Driver notification via SMS/Telegram  
-✅ Schedule rides (date & time picker)  
-✅ Multi-driver support  
-✅ Infrastructure fully managed by Terraform  
+- Order ride via Telegram (pick-up & drop-off)  
+- Price calculation (minimum $10 for < 5 miles)  
+- Driver notification via SMS/Telegram  
+- Schedule rides (date & time picker)  
+- Multi-driver support  
+- Infrastructure fully managed by Terraform   
 
 ---
 
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 - **AWS Lambda** (Python 3.11)  
 - **Amazon API Gateway v2** (HTTP API)  
@@ -107,8 +122,10 @@ Example driver config:
 
 ---
 
-## 🧾 License
+## License
 
-Released under the **MIT License** — feel free to use, fork, and learn from it.  
-© Ruslan Dashkin (🚀Ruslan AWS)
-Branding name “🚀Ruslan AWS” and related visuals are protected; commercial reuse or rebranding without permission is prohibited.
+Released under the MIT License.  
+See the LICENSE file for full details.
+
+Branding name “🚀 Ruslan AWS” and related visuals may not be reused or rebranded without permission.
+

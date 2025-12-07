@@ -1,14 +1,4 @@
 ############################################
-# Data — Lambda ZIP Archive
-# Purpose: package source code before deployment
-############################################
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda_src"
-  output_path = "${path.module}/../lambda_src.zip"
-}
-
-############################################
 # Lambda — Telegram Webhook Handler
 # Purpose: process webhook requests from API Gateway
 ############################################
@@ -21,6 +11,12 @@ resource "aws_lambda_function" "handler" {
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 10
+
+  reserved_concurrent_executions = 10
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {

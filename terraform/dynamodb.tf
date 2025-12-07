@@ -1,7 +1,8 @@
 ############################################
-# DynamoDB — Trips Table
-# Purpose: store ride data
+# DynamoDB Table — Trips
+# Purpose: single-table schema (pk/sk)
 ############################################
+# tfsec:ignore:aws-dynamodb-table-customer-key
 resource "aws_dynamodb_table" "trips" {
   name         = "${var.project_name}-trips"
   billing_mode = var.dynamodb_billing_mode
@@ -28,6 +29,14 @@ resource "aws_dynamodb_table" "trips" {
     name            = "trip-id-index"
     hash_key        = "trip_id"
     projection_type = "ALL"
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 
   tags = {

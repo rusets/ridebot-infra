@@ -1,0 +1,16 @@
+skip-check:
+  # Lambda optional hardening rules — intentionally skipped
+  - CKV_AWS_117 # Lambda VPC not required for public Telegram webhook
+  - CKV_AWS_116 # DLQ not needed for a small synchronous webhook
+  - CKV_AWS_173 # No secrets stored in env vars (only SSM param names)
+  - CKV_AWS_272 # Code signing not required for this demo project
+
+  # API Gateway — endpoint must remain public for Telegram webhook
+  - CKV_AWS_309 # Route authorization not used by design
+
+  # CloudWatch — short retention and no CMK are acceptable for this project
+  - CKV_AWS_338 # Retention < 365 days by design
+  - CKV_AWS_158 # Using AWS-managed encryption is acceptable
+
+  # DynamoDB — AWS-managed SSE is sufficient here
+  - CKV_AWS_119 # Table does not require CMK encryption

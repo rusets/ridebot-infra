@@ -30,13 +30,37 @@ resource "aws_apigatewayv2_route" "telegram_webhook" {
 }
 
 ############################################
+# CloudWatch Log Group — API Gateway HTTP API
+# Purpose: store access logs for prod stage
+############################################
+# tfsec:ignore:aws-cloudwatch-log-group-customer-key
+resource "aws_cloudwatch_log_group" "apigw_logs" {
+  name              = "/apigw/${var.project_name}"
+  retention_in_days = 7
+}
+
+############################################
 # API Gateway Stage — prod
-# Purpose: automatically deploy all routes/integrations
+# Purpose: HTTP API v2 stage with access logging
 ############################################
 resource "aws_apigatewayv2_stage" "prod" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = "prod"
   auto_deploy = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.apigw_logs.arn
+    format = jsonencode({
+      requestId        = "$context.requestId"
+      httpMethod       = "$context.httpMethod"
+      routeKey         = "$context.routeKey"
+      status           = "$context.status"
+      protocol         = "$context.protocol"
+      responseLatency  = "$context.responseLatency"
+      requestTime      = "$context.requestTime"
+      integrationError = "$context.integrationErrorMessage"
+    })
+  }
 }
 
 ############################################

@@ -1,10 +1,10 @@
-# 🚖 RideBot — Technical Documentation
+#  RideBot — Technical Documentation
 
 This document explains how the system is built and deployed: **Terraform (AWS)**, **Lambda (Python)**, **API Gateway**, **DynamoDB**, **Amazon Location**, **SSM Parameters**, and **CI/CD** via **GitHub Actions** (OIDC).
 
 ---
 
-## 📐 High-level architecture
+##  High-level architecture
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
 
 ---
 
-## 🔁 Request flow
+##  Request flow
 
 ```mermaid
 sequenceDiagram
@@ -41,36 +41,64 @@ sequenceDiagram
 
 ---
 
-## 🚦 Trip status state machine
+##  Trip status state machine
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Requested
-  Requested --> DriverPending: notify drivers
-  DriverPending --> OnTheWay: driver accepts
-  OnTheWay --> Started: driver taps "Trip started"
-  Started --> Finished: driver taps "Trip finished"
-  Requested --> Canceled: user cancels
-  DriverPending --> Canceled
-  OnTheWay --> Canceled
+  [*] --> Pending
+  Pending --> Accepted
+  Pending --> Declined
+  Accepted --> Finished
+  Accepted --> Canceled
+  Pending --> Canceled
 ```
 
 ---
 
-## 🗂 Repository structure
+##  Full repository structure
 
 ```
 ridebot-infra/
-├── docs/             # Documentation (this file)
-├── lambda_src/       # Python source for Lambda (app.py, etc.)
-├── lambda_src.zip    # Deployment artifact for Lambda
-├── terraform/        # Terraform IaC (APIGW, Lambda, DynamoDB, IAM, etc.)
-└── .github/workflows # GitHub Actions workflows
+│
+├── .github/
+│   └── workflows/
+│       └── infra.yml                # Optional CI/CD (disabled if needed)
+│
+├── docs/
+│   ├── adr/                         # Architecture Decision Records
+│   │   ├── 001-http-api.md
+│   │   ├── 002-dynamodb-single-table.md
+│   │   └── 003-ssm-secrets.md
+│   ├── limitations.md               # Project limitations
+│   └── TECHNICAL.md                 # Full technical documentation
+│
+├── lambda_src/
+│   └── app.py                       # AWS Lambda source (Telegram bot backend)
+│
+├── terraform/
+│   ├── .checkov.yaml                # Checkov security configuration
+│   ├── apigw.tf                     # API Gateway v2 (HTTP API)
+│   ├── backend.tf                   # S3 + DynamoDB state backend
+│   ├── dynamodb.tf                  # Single-table DynamoDB design
+│   ├── iam.tf                       # IAM role & policies for Lambda
+│   ├── identity.tf                  # AWS identity data sources
+│   ├── lambda.tf                    # Lambda function definition
+│   ├── location.tf                  # AWS Location Service (Place Index + Routes)
+│   ├── outputs.tf                   # Terraform outputs
+│   ├── providers.tf                 # AWS provider config
+│   ├── ssm_data.tf                  # SSM parameters
+│   ├── variables.tf                 # TF variables
+│   ├── versions.tf                  # Provider versions / TF version requirement
+│   └── webhook.tf                   # Telegram webhook registration
+│
+├── .tflint.hcl       # Linter configuration for Terraform
+├── LICENSE
+└── README.md                        # Main project overview
 ```
 
 ---
 
-## 🧩 Components
+##  Components
 
 - **Lambda (`app.py`)**
   - Handles Telegram webhook, flow, validation, and messages.
@@ -100,7 +128,7 @@ ridebot-infra/
 
 ---
 
-## 🗃 DynamoDB data model
+##  DynamoDB data model
 
 **Table:** `ridebot-trips` (on-demand)
 
@@ -130,7 +158,7 @@ ridebot-infra/
   "sk": "META",
   "status": "DriverPending",
   "pickup_address": "123 Main St, Example City, FL",
-  "dropoff_address": "456 Oak Ave, Sample Town, FL"
+  "dropoff_address": "456 Oak Ave, Sample Town, FL",
   "distance_miles": 1.6,
   "eta_min": 6,
   "price_usd": 10.0,
@@ -148,7 +176,7 @@ ridebot-infra/
 
 ---
 
-## 🚀 Deploy
+##  Deploy
 
 ### 1) Prereqs (one-time)
 Create SSM parameters:
@@ -172,7 +200,7 @@ terraform apply -auto-approve
 
 ---
 
-## 🔎 Verify webhook
+##  Verify webhook
 
 ```bash
 TOKEN=$(aws ssm get-parameter --name /ridebot/telegram_bot_token --with-decryption --query 'Parameter.Value' --output text)
@@ -182,7 +210,7 @@ You should see your current API Gateway URL in `url`.
 
 ---
 
-## 🛠 Troubleshooting
+##  Troubleshooting
 
 - **Mermaid “Unable to render”**  
   - Blocks must start with ```mermaid and end with three backticks.  
@@ -199,9 +227,11 @@ You should see your current API Gateway URL in `url`.
 
 ---
 
-## 💵 Cost notes
+##  Cost notes
 
 - **Lambda + API Gateway** — pay per request (very low at small scale).  
 - **DynamoDB** — on-demand; cents per month with small traffic.  
 - **Amazon Location** — per-request billing; geocode & routes only when needed.  
 - **SSM Parameter Store** — standard tier for a few parameters is effectively free.
+
+
