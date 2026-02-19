@@ -1,20 +1,20 @@
-#  RideBot Infra
+#  RideBot Infra — Serverless “Ride Request” Bot
 
 <p align="center">
-  <img src="https://img.shields.io/badge/IaC-Terraform-blueviolet" alt="Terraform"/>
-  <img src="https://img.shields.io/badge/Cloud-AWS-orange" alt="AWS"/>
-  <img src="https://img.shields.io/badge/Runtime-Lambda-yellow" alt="Lambda"/>
-  <img src="https://img.shields.io/badge/API-API%20Gateway-9cf" alt="API Gateway"/>
-  <img src="https://img.shields.io/badge/Database-DynamoDB-4053D6" alt="DynamoDB"/>
-  <img src="https://img.shields.io/badge/Maps-AWS%20Location%20Service-blue" alt="Location Service"/>
-  <img src="https://img.shields.io/badge/Webhook-Telegram-26A5E4" alt="Telegram"/>
-  <img src="https://img.shields.io/badge/Validation-tfsec%20%7C%20tflint%20%7C%20checkov-brightgreen" alt="Validation"/>
-  <img src="https://img.shields.io/badge/Region-us--east--1-007EC6" alt="Region"/>
+  <img src="https://img.shields.io/badge/IaC-Terraform-blueviolet"/>
+  <img src="https://img.shields.io/badge/Cloud-AWS-orange"/>
+  <img src="https://img.shields.io/badge/Serverless-Lambda%20%7C%20API%20Gateway-yellow"/>
+  <img src="https://img.shields.io/badge/Data-DynamoDB%20%7C%20Location-4053D6"/>
+  <img src="https://img.shields.io/badge/Interface-Telegram-26A5E4"/>
+  <img src="https://img.shields.io/badge/Validation-tfsec%20%7C%20tflint%20%7C%20checkov-brightgreen"/>
+  <img src="https://img.shields.io/badge/Region-us--east--1-007EC6"/>
 </p>
 
-Cloud-native ride booking system built with **AWS + Terraform + Telegram Bot**.  
-The bot lets users order a ride via Telegram, calculates routes & prices with **Amazon Location Service**, stores trips in **DynamoDB**, and notifies drivers instantly.
-> Educational/demo implementation of a serverless ride-booking workflow using AWS services. Not intended as a commercial multi-tenant platform.
+I designed and implemented this cloud-native ride booking system using **AWS, Terraform, and Telegram**.  
+It enables users to request rides via Telegram, calculates routes and pricing with **Amazon Location Service**, stores trip data in **DynamoDB**, and notifies drivers instantly.
+
+This project showcases a serverless ride-booking workflow built on AWS and is not intended to be a commercial multi-tenant platform.
+
 ---
 
 ##  Architecture
@@ -136,7 +136,6 @@ Planned enhancements to evolve this demo into a more robust, production-aligned 
 
 ---
 
-
 ##  Tech Stack
 
 - **AWS Lambda** (Python 3.11)  
@@ -151,8 +150,6 @@ Planned enhancements to evolve this demo into a more robust, production-aligned 
 
 ## License
 
-Released under the MIT License.  
-See the LICENSE file for full details.
+This project is released under the MIT License.
 
-Branding name “🚀 Ruslan AWS” and related visuals may not be reused or rebranded without permission.
-
+See the `LICENSE` file for details.
